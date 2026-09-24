@@ -897,7 +897,10 @@ int mayo_verify(const mayo_params_t *p, const unsigned char *m,
 
     aes128_ctr_keyexp_publicinputs(&ctx, cpk);
     aes_ctr_init(&stream_P1, iv, 0, ctx.sk_exp, aes128_encrypt_publicinputs_asm);
-    aes_ctr_init(&stream_P2, iv, 0xA41F0000, ctx.sk_exp, aes128_encrypt_publicinputs_asm);
+    aes_ctr_init(&stream_P2, iv, PARAM_P2_init, ctx.sk_exp, aes128_encrypt_publicinputs_asm);
+    aes_ctr_refill(&stream_P2);
+	  stream_P2.pos = PARAM_P2_pos;
+    stream_P2.available = 16 - PARAM_P2_pos;
 
     
     //S1. (P1.(S1)^T + P2.(S2)^T) computation

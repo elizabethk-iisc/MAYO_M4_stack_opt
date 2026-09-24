@@ -152,6 +152,8 @@
 #define MAYO_1_digest_bytes 32
 #define MAYO_1_pk_seed_bytes 16
 #define MAYO_1_sk_seed_bytes 24
+#define MAYO_1_P2_init 0xA41F0000
+#define MAYO_1_P2_pos 0 
 
 #define MAYO_2_name "MAYO_2"
 #define MAYO_2_n 86
@@ -240,6 +242,8 @@
 #define PARAM_JOIN2_(a, b) a##_##b
 #define PARAM_JOIN2(a, b) PARAM_JOIN2_(a, b)
 #define PARAM_NAME(end) PARAM_JOIN2(MAYO_VARIANT, end)
+#define PARAM_P2_init PARAM_JOIN2(MAYO_VARIANT,P2_init)
+#define PARAM_P2_pos PARAM_JOIN2(MAYO_VARIANT,P2_pos)
 
 #if defined(MAYO_VARIANT)
 #define PARAM_JOIN3_(a, b, c) pqmayo_##a##_##b##_##c

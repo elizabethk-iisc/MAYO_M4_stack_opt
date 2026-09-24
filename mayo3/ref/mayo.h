@@ -6,6 +6,6 @@
 #define MAYO_VARIANT MAYO_3
 #define MAYO_BUILD_TYPE_REF
 
-#include "../../../submodules/MAYO-C/include/mayo.h"
+#include "../../include/mayo.h"
 
 #endif

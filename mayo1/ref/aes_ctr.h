@@ -37,7 +37,6 @@ int AES_128_CTR_4R_NI(unsigned char *output, size_t outputByteLen,
 #else
 int AES_128_CTR(unsigned char *output, size_t outputByteLen,
                 const unsigned char *input, size_t inputByteLen);
-
 #endif
 #endif
 
