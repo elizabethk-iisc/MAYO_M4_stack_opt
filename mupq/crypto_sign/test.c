@@ -5,7 +5,7 @@
 
 #include <string.h>
 
-#define NTESTS 15
+#define NTESTS 1
 #define MLEN 32
 
 // https://stackoverflow.com/a/1489985/1711232

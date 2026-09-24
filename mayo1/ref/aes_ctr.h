@@ -37,8 +37,32 @@ int AES_128_CTR_4R_NI(unsigned char *output, size_t outputByteLen,
 #else
 int AES_128_CTR(unsigned char *output, size_t outputByteLen,
                 const unsigned char *input, size_t inputByteLen);
+
 #endif
 #endif
+
+typedef struct {
+    unsigned char buf[16];
+
+    uint32_t ivw[4];
+
+    const uint64_t *rkeys;
+
+    void (*aes_encrypt_asm)(const uint8_t *,
+                            const uint8_t *,
+                            uint8_t *);
+
+    size_t pos;
+    size_t available;
+} aes_ctr_stream_t;
+
+/* AES CTR stream functions */
+void aes_ctr_init(aes_ctr_stream_t *s, const unsigned char *iv, uint32_t counter, const uint64_t *rkeys, 
+                  void (*aes_encrypt_asm)(const uint8_t *, const uint8_t *, uint8_t *));
+
+void aes_ctr_refill(aes_ctr_stream_t *s);
+
+void aes_ctr_get_words(aes_ctr_stream_t *s, uint64_t *out, size_t nbytes);
 
 #endif
 

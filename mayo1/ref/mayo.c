@@ -4,6 +4,7 @@
 #include <mayo.h>
 #include <randombytes.h>
 #include <aes_ctr.h>
+#include <aes-publicinputs.h>
 #include <arithmetic.h>
 #include <simple_arithmetic.h>
 #include <fips202.h>
@@ -16,6 +17,8 @@
 
 #define MAYO_MIN(x, y) (((x) < (y)) ? (x) : (y))
 #define PK_PRF AES_128_CTR
+
+extern void aes128_encrypt_publicinputs_asm(const uint8_t *rk, const uint8_t *in, uint8_t *out);
 
 static void decode(const unsigned char *m, unsigned char *mdec, int mdeclen) {
     int i;
@@ -812,12 +815,144 @@ int mayo_open_epk(const mayo_params_t *p, unsigned char *m,
 int mayo_verify(const mayo_params_t *p, const unsigned char *m,
                 size_t mlen, const unsigned char *sig,
                 const unsigned char *cpk) {
-    alignas(64) uint64_t pk[P1_LIMBS_MAX + P2_LIMBS_MAX + P3_LIMBS_MAX + MAYO_MVEC_SLACK];
+    //ek alignas(64) uint64_t pk[P1_LIMBS_MAX + P2_LIMBS_MAX + P3_LIMBS_MAX + MAYO_MVEC_SLACK];
+    alignas(64) uint64_t pk[P3_LIMBS_MAX + MAYO_MVEC_SLACK];
 
-    int ret = mayo_expand_pk(p, cpk, pk);
-    if (ret != MAYO_OK) {
-        return MAYO_ERR;
+    unsigned char tEnc[M_BYTES_MAX + MAYO_LAMBDA_SEED_BYTES];
+    alignas(32) uint64_t lambda[N_MAX * M_VEC_LIMBS_MAX + MAYO_MVEC_SLACK];
+    unsigned char t[M_MAX];
+    unsigned char y[2 * M_MAX] = {0}; // extra space for reduction mod f(X)
+    unsigned char s[K_MAX * N_MAX];
+    unsigned char tmp[DIGEST_BYTES_MAX + SALT_BYTES_MAX];
+
+    const int param_m = PARAM_m(p);
+    const int param_n = PARAM_n(p);
+    const int param_k = PARAM_k(p);
+    const int param_m_bytes = PARAM_m_bytes(p);
+    const int param_sig_bytes = PARAM_sig_bytes(p);
+    const int param_digest_bytes = PARAM_digest_bytes(p);
+    const int param_salt_bytes = PARAM_salt_bytes(p);
+    
+    uint64_t row_acc[K_MAX * M_VEC_LIMBS_MAX];
+
+    aes128ctx_publicinputs ctx;
+    unsigned char iv[12] = {0};
+    aes_ctr_stream_t stream_P1;
+    aes_ctr_stream_t stream_P2;
+
+    const int m_vec_limbs = PARAM_m_vec_limbs(p); 
+    uint64_t words[m_vec_limbs];   
+    size_t nbytes = PARAM_m(p)/2;
+
+    int bs_mat_entries_used = 0;
+
+    alignas(64) uint64_t SPS[K_MAX * K_MAX * M_VEC_LIMBS_MAX + MAYO_MVEC_SLACK];
+    MAYO_ZERO_SLACK(SPS, PARAM_k(p) * PARAM_k(p) * PARAM_m_vec_limbs(p));
+    MAYO_ACC_INIT(SPS); // the products below accumulate into it
+
+
+//ek     const uint64_t *P1 = epk;
+//ek #ifdef MAYO_PACKED_P1P2
+//ek     // P1 and P2 are packed in the expanded key, so P2/P3 start at byte offsets
+//ek     const uint64_t *P2 = (const uint64_t *)((const unsigned char *)P1 + PARAM_P1_bytes(p));
+//ek     const uint64_t *P3 = (const uint64_t *)((const unsigned char *)P1 + PARAM_P1_bytes(p) + PARAM_P2_bytes(p));
+//ek #else
+//ek     const uint64_t *P2 = P1 + PARAM_P1_limbs(p);
+//ek     const uint64_t *P3 = P2 + PARAM_P2_limbs(p);
+//ek #endif
+//ek 
+//ek #if defined(MAYO_PACKED_P1P2) && defined(TARGET_BIG_ENDIAN)
+//ek #error "packed P1/P2 is little-endian only: the swap below needs limb-aligned m-vecs"
+//ek #endif
+//ek 
+//ek #ifdef TARGET_BIG_ENDIAN
+//ek     uint64_t pk_be[P1_LIMBS_MAX + P2_LIMBS_MAX + P3_LIMBS_MAX];
+//ek     memcpy(pk_be, epk, (PARAM_P1_limbs(p) + PARAM_P2_limbs(p) + PARAM_P3_limbs(p)) * sizeof(uint64_t));
+//ek     P1 = pk_be;
+//ek     P2 = pk_be + PARAM_P1_limbs(p);
+//ek     P3 = pk_be + PARAM_P1_limbs(p) + PARAM_P2_limbs(p);
+//ek     for (int i = 0; i < PARAM_P1_limbs(p); ++i)
+//ek         pk_be[i] = BSWAP64(pk_be[i]);
+//ek     for (int i = PARAM_P1_limbs(p); i < PARAM_P1_limbs(p) + PARAM_P2_limbs(p); ++i)
+//ek         pk_be[i] = BSWAP64(pk_be[i]);
+//ek     for (int i = PARAM_P1_limbs(p) + PARAM_P2_limbs(p); i < PARAM_P1_limbs(p) + PARAM_P2_limbs(p) + PARAM_P3_limbs(p); ++i)
+//ek         pk_be[i] = BSWAP64(pk_be[i]);
+//ek #endif
+
+    // hash m
+    shake256(tmp, param_digest_bytes, m, mlen);
+
+    // compute t
+    memcpy(tmp + param_digest_bytes, sig + param_sig_bytes - param_salt_bytes,
+           param_salt_bytes);
+    /* SHAKE is a stream, so the first param_m_bytes are the same t as before;
+       the extra MAYO_LAMBDA_SEED_BYTES seed the lambda expansion. */
+    shake256(tEnc, param_m_bytes + MAYO_LAMBDA_SEED_BYTES, tmp,
+             param_digest_bytes + param_salt_bytes);
+    decode(tEnc, t, param_m);
+    derive_lambda(p, tEnc + param_m_bytes, lambda);
+
+    // decode s
+    decode(sig, s, param_k * param_n);
+
+    aes128_ctr_keyexp_publicinputs(&ctx, cpk);
+    aes_ctr_init(&stream_P1, iv, 0, ctx.sk_exp, aes128_encrypt_publicinputs_asm);
+    aes_ctr_init(&stream_P2, iv, 0xA41F0000, ctx.sk_exp, aes128_encrypt_publicinputs_asm);
+
+    
+    //S1. (P1.(S1)^T + P2.(S2)^T) computation
+    for (int r = 0; r < PARAM_v(p); r++) {
+        memset(row_acc, 0, K_MAX * M_VEC_LIMBS_MAX * sizeof(uint64_t));
+        for (int c = r; c < PARAM_v(p); c++) {
+            aes_ctr_get_words(&stream_P1, words, nbytes);
+            for (int k = 0; k < PARAM_k(p); k += 1) {
+                  m_vec_mul_add(m_vec_limbs, words, s[k * PARAM_n(p) + c], row_acc + m_vec_limbs * k);
+            }
+        }
+        for (int c = 0; c < PARAM_o(p); c++) {
+            aes_ctr_get_words(&stream_P2, words, nbytes);
+            for (int k = 0; k < PARAM_k(p); k++) {
+                m_vec_mul_add(m_vec_limbs, words, s[PARAM_v(p) + k * PARAM_n(p) + c], row_acc + m_vec_limbs * k);
+            }
+        }
+
+        m_vec_add(m_vec_limbs, lambda + (size_t) r * m_vec_limbs, row_acc);
+
+        for (int c = 0; c < PARAM_k(p); c++) {
+            for (int k = 0; k < PARAM_k(p); k += 1) {
+                m_vec_mul_add(m_vec_limbs, row_acc + m_vec_limbs * c, s[k * PARAM_n(p) + r], SPS + m_vec_limbs * (k * PARAM_k(p) + c));
+            }
+        }
     }
+                        
+    unpack_m_vecs(cpk + PARAM_pk_seed_bytes(p), pk, PARAM_P3_limbs(p)/PARAM_m_vec_limbs(p), PARAM_m(p));
+    MAYO_ZERO_SLACK(pk, PARAM_P3_limbs(p));
 
-    return mayo_verify_epk(p, m, mlen, sig, pk);
+    //S2.P3.(S2)^T computation
+    for (int r = 0; r < PARAM_o(p); r++) {
+        memset(row_acc, 0, K_MAX * M_VEC_LIMBS_MAX * sizeof(uint64_t));
+        for (int c = r; c < PARAM_o(p); c++) {
+            for (int k = 0; k < PARAM_k(p); k += 1) {
+                m_vec_mul_add(m_vec_limbs, pk + m_vec_limbs * bs_mat_entries_used, s[PARAM_v(p) + k * PARAM_n(p) + c], row_acc + m_vec_limbs * k);
+            }
+            bs_mat_entries_used += 1;
+        }
+        
+        m_vec_add(m_vec_limbs, lambda + (size_t) (r + PARAM_v(p)) * m_vec_limbs, row_acc);
+
+        for (int c = 0; c < PARAM_k(p); c++) {
+            for (int k = 0; k < PARAM_k(p); k += 1) {
+                m_vec_mul_add(m_vec_limbs, row_acc + m_vec_limbs * c, s[PARAM_v(p) + k * PARAM_n(p) + r], SPS + m_vec_limbs * (k * PARAM_k(p) + c));
+            }
+        }
+    }
+     
+    unsigned char zero[M_MAX] = {0};
+    compute_rhs(p, SPS, zero, y); 
+
+    if (memcmp(y, t, param_m) == 0) {
+        return MAYO_OK; // good signature
+    }
+    return MAYO_ERR; // bad signature
+
 }
