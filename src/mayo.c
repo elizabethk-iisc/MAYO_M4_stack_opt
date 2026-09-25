@@ -346,6 +346,47 @@ static void eval_public_map(const mayo_params_t *p, const unsigned char *s, cons
     compute_rhs(p, SPS, zero, eval);
 }
 
+static void expand_compute_P3(const mayo_params_t *p, const unsigned char *input, const unsigned char *O, uint64_t *output) 
+{
+    aes128ctx_publicinputs ctx;
+    unsigned char iv[12] = {0};
+    aes_ctr_stream_t stream_P1;
+    aes_ctr_stream_t stream_P2;
+
+    const int m_vec_limbs = PARAM_m_vec_limbs(p); 
+    uint64_t words[m_vec_limbs];   
+    size_t nbytes = PARAM_m(p)/2;
+      
+    uint64_t row_acc[O_MAX * M_VEC_LIMBS_MAX] = {0}; 
+
+    aes128_ctr_keyexp_publicinputs(&ctx, input);
+    aes_ctr_init(&stream_P1, iv, 0, ctx.sk_exp, aes128_encrypt_publicinputs_asm);
+    aes_ctr_init(&stream_P2, iv, PARAM_P2_init, ctx.sk_exp, aes128_encrypt_publicinputs_asm);
+    aes_ctr_refill(&stream_P2);
+    stream_P2.pos = PARAM_P2_pos;
+    stream_P2.available = 16 - PARAM_P2_pos ;
+
+    //O^(T). P1. O computation
+    for (int r = 0; r < PARAM_v(p); r++) {
+        memset(row_acc, 0, O_MAX * M_VEC_LIMBS_MAX * sizeof(uint64_t));
+        for (int c = r; c < PARAM_v(p); c++) {
+            aes_ctr_get_words(&stream_P1, words, nbytes);
+            //For (P1.O + P2)
+            for (int k = 0; k < PARAM_o(p); k++) {
+                if(c == r) {
+                  aes_ctr_get_words(&stream_P2, row_acc + m_vec_limbs * k, nbytes);
+                }
+                m_vec_mul_add(m_vec_limbs, words, O[c * PARAM_o(p) + k], row_acc + m_vec_limbs * k);
+            }
+        }
+        for (int c = 0; c < PARAM_o(p); c++) {
+            for (int k = 0; k < PARAM_o(p); k += 1) {
+                m_vec_mul_add(m_vec_limbs, row_acc + m_vec_limbs * c, O[r * PARAM_o(p) + k], output + m_vec_limbs * (k * PARAM_o(p) + c));
+            }
+        }
+    }
+}
+
 // Public API
 
 int mayo_keypair(const mayo_params_t *p, unsigned char *pk, unsigned char *sk) {
@@ -642,7 +683,7 @@ int mayo_keypair_compact(const mayo_params_t *p, unsigned char *cpk,
     int ret = MAYO_OK;
     unsigned char *seed_sk = csk;
     unsigned char S[PK_SEED_BYTES_MAX + O_BYTES_MAX];
-    uint64_t P[P1_LIMBS_MAX + P2_LIMBS_MAX + MAYO_MVEC_SLACK];
+    //ek uint64_t P[P1_LIMBS_MAX + P2_LIMBS_MAX + MAYO_MVEC_SLACK];
     uint64_t P3[O_MAX*O_MAX*M_VEC_LIMBS_MAX + MAYO_MVEC_SLACK] = {0};
 
     unsigned char *seed_pk;
@@ -653,13 +694,13 @@ int mayo_keypair_compact(const mayo_params_t *p, unsigned char *cpk,
     const int param_v = PARAM_v(p);
     const int param_o = PARAM_o(p);
     const int param_O_bytes = PARAM_O_bytes(p);
-    const int param_P1_limbs = PARAM_P1_limbs(p);
+    //ek const int param_P1_limbs = PARAM_P1_limbs(p);
     const int param_P3_limbs = PARAM_P3_limbs(p);
     const int param_pk_seed_bytes = PARAM_pk_seed_bytes(p);
     const int param_sk_seed_bytes = PARAM_sk_seed_bytes(p);
 
-    uint64_t *P1 = P;
-    uint64_t *P2 = P + param_P1_limbs;
+    //ek uint64_t *P1 = P;
+    //ek uint64_t *P2 = P + param_P1_limbs;
 
     // seed_sk $←- B^(sk_seed bytes)
     #if defined(PQM4) || defined(HAVE_RANDOMBYTES_NORETVAL)
@@ -684,11 +725,13 @@ int mayo_keypair_compact(const mayo_params_t *p, unsigned char *cpk,
     VALGRIND_MAKE_MEM_DEFINED(seed_pk, param_pk_seed_bytes);
 #endif
 
-    expand_P1_P2(p, P, seed_pk, 0);
-    MAYO_ZERO_SLACK(P, param_P1_limbs + PARAM_P2_limbs(p));
+    //ek expand_P1_P2(p, P, seed_pk, 0);
+    //ek MAYO_ZERO_SLACK(P, param_P1_limbs + PARAM_P2_limbs(p));
+
+    expand_compute_P3(p, seed_pk, O, P3);
 
     // compute P3 (modifies P2 in the process)
-    compute_P3(p, P1, P2, O, P3);
+    //ek compute_P3(p, P1, P2, O, P3);
 
     // store seed_pk in cpk
     memcpy(cpk, seed_pk, param_pk_seed_bytes);
@@ -705,7 +748,7 @@ int mayo_keypair_compact(const mayo_params_t *p, unsigned char *cpk,
 #endif
     mayo_secure_clear(S, PK_SEED_BYTES_MAX + O_BYTES_MAX);
     mayo_secure_clear(O, sizeof(O));
-    mayo_secure_clear(P2, PARAM_P2_limbs(p)*sizeof(uint64_t));
+    //ek mayo_secure_clear(P2, PARAM_P2_limbs(p)*sizeof(uint64_t));
     mayo_secure_clear(P3, sizeof(P3));
     return ret;
 }
