@@ -55,6 +55,10 @@ typedef struct sk_t {
     uint8_t sk_seed[SK_SEED_BYTES_MAX]; // seed_sk, needed for salt derivation in Sign(esk)
 } sk_t;
 
+typedef struct sk_only_t {
+    uint8_t O[V_MAX*O_MAX];
+} sk_only_t;
+
 typedef struct pk_t {
     uint64_t p[P1_LIMBS_MAX + P2_LIMBS_MAX + P3_LIMBS_MAX + MAYO_MVEC_SLACK];
 } pk_t;

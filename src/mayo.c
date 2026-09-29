@@ -348,6 +348,10 @@ static void eval_public_map(const mayo_params_t *p, const unsigned char *s, cons
 
 static void expand_compute_P3(const mayo_params_t *p, const unsigned char *input, const unsigned char *O, uint64_t *output) 
 {
+    #ifndef ENABLE_PARAMS_DYNAMIC
+    (void) p;
+    #endif
+
     aes128ctx_publicinputs ctx;
     unsigned char iv[12] = {0};
     aes_ctr_stream_t stream_P1;
@@ -454,8 +458,8 @@ int mayo_expand_sk(const mayo_params_t *p, const unsigned char *csk,
 }
 
 static int sign_signature_internal(const mayo_params_t *p, unsigned char *sig,
-              size_t *siglen, const unsigned char *m,
-              size_t mlen, const sk_t *sk, int use_l) {
+              size_t *siglen, const unsigned char *m, size_t mlen,
+              const unsigned char *csk) {
     int ret = MAYO_OK;
     unsigned char tenc[M_BYTES_MAX + MAYO_LAMBDA_SEED_BYTES], t[M_MAX]; // no secret data
     alignas(32) uint64_t lambda[N_MAX * M_VEC_LIMBS_MAX + MAYO_MVEC_SLACK];
@@ -465,10 +469,11 @@ static int sign_signature_internal(const mayo_params_t *p, unsigned char *sig,
     unsigned char A[((M_MAX+7)/8*8) * (K_MAX * O_MAX + 1) + 32] = { 0 };   // secret data
     unsigned char x[K_MAX * N_MAX];                       // not secret data
     unsigned char r[K_MAX * O_MAX + 1] = { 0 };           // secret data
-    unsigned char s[K_MAX * N_MAX];                       // not secret data
-    const unsigned char *seed_sk;
+    unsigned char s[K_MAX * N_MAX];                       // not secret data 
     unsigned char tmp[DIGEST_BYTES_MAX + SALT_BYTES_MAX + SK_SEED_BYTES_MAX + 1];
     unsigned char *ctrbyte;
+    unsigned char S[PK_SEED_BYTES_MAX + O_BYTES_MAX];
+    alignas(32) sk_only_t sk;
     int sol_found = 0;
 
     const int param_m = PARAM_m(p);
@@ -483,27 +488,34 @@ static int sign_signature_internal(const mayo_params_t *p, unsigned char *sig,
     const int param_A_cols = PARAM_A_cols(p);
     const int param_digest_bytes = PARAM_digest_bytes(p);
     const int param_sk_seed_bytes = PARAM_sk_seed_bytes(p);
+    const int param_pk_seed_bytes = PARAM_pk_seed_bytes(p);
     const int param_salt_bytes = PARAM_salt_bytes(p);
-
-    seed_sk = sk->sk_seed;
+    const int param_O_bytes = PARAM_O_bytes(p);
+    
+    const unsigned char *seed_sk = csk;
+    unsigned char *seed_pk = S;
+    unsigned char *O = sk.O;
+    shake256(S, param_pk_seed_bytes + param_O_bytes, seed_sk,
+             param_sk_seed_bytes);
+    decode(S + param_pk_seed_bytes, O, param_v * param_o);
 
     // hash message
     shake256(tmp, param_digest_bytes, m, mlen);
 
     // sk is read-only on little-endian; on big-endian the swaps below convert it in
     // place and the err: block converts it back, leaving the caller's key unchanged.
-    uint64_t *P1 = (uint64_t *) sk->p;
-    uint64_t *P2_or_L = P1 + PARAM_P1_limbs(p);
+    //ek uint64_t *P1 = (uint64_t *) sk->p;
+    //ek uint64_t *P2_or_L = P1 + PARAM_P1_limbs(p);
     uint64_t Mtmp[K_MAX * O_MAX * M_VEC_LIMBS_MAX + MAYO_MVEC_SLACK] = {0};
 
-#ifdef TARGET_BIG_ENDIAN
-    for (int i = 0; i < PARAM_P1_limbs(p); ++i) {
-        P1[i] = BSWAP64(P1[i]);
-    }
-    for (int i = 0; i < PARAM_P2_limbs(p); ++i) {
-        P2_or_L[i] = BSWAP64(P2_or_L[i]);
-    }
-#endif
+//ek #ifdef TARGET_BIG_ENDIAN
+//ek     for (int i = 0; i < PARAM_P1_limbs(p); ++i) {
+//ek         P1[i] = BSWAP64(P1[i]);
+//ek     }
+//ek     for (int i = 0; i < PARAM_P2_limbs(p); ++i) {
+//ek         P2_or_L[i] = BSWAP64(P2_or_L[i]);
+//ek     }
+//ek #endif
 
     // choose the randomizer
     #if defined(PQM4) || defined(HAVE_RANDOMBYTES_NORETVAL)
@@ -547,9 +559,10 @@ static int sign_signature_internal(const mayo_params_t *p, unsigned char *sig,
         }
 
         // compute M_i matrices and all v_i*P1*v_j, with lambda folded in
-        m_calculate_M_and_VPV(p, P1, P2_or_L, sk->O, Vdec, lambda, use_l,
-                              Mtmp, (uint64_t *) A);
+        //ek m_calculate_M_and_VPV(p, P1, P2_or_L, sk->O, Vdec, lambda, use_l, Mtmp, (uint64_t *) A);
 
+        compute_M_and_VPV_otf(p, Vdec, O, seed_pk, lambda, Mtmp, (uint64_t *) A);
+        m_lambda_oil(p, lambda, Mtmp);
         compute_rhs(p, (uint64_t*) A, t, y);
         compute_A(p, Mtmp, A);
 
@@ -575,7 +588,8 @@ static int sign_signature_internal(const mayo_params_t *p, unsigned char *sig,
         goto err;
     }
 
-    m_compute_s(p, sk->O, Vdec, x, s);
+    //ek m_compute_s(p, sk->O, Vdec, x, s);
+    m_compute_s(p, sk.O, Vdec, x, s);
     encode(s, sig, param_n * param_k);
 
     memcpy(sig + param_sig_bytes - param_salt_bytes, salt, param_salt_bytes);
@@ -604,43 +618,47 @@ err:
 // the pair is the expand-once-sign-many path, so it pays for L once and reads it
 // back on every signature. esk is unchanged on return, but big-endian converts it
 // in place, so concurrent signers cannot share one.
-int mayo_sign_signature_esk(const mayo_params_t *p, unsigned char *sig,
-              size_t *siglen, const unsigned char *m,
-              size_t mlen, const sk_t *esk) {
-    return sign_signature_internal(p, sig, siglen, m, mlen, esk, 1);
-}   
+//ek int mayo_sign_signature_esk(const mayo_params_t *p, unsigned char *sig,
+//ek               size_t *siglen, const unsigned char *m,
+//ek               size_t mlen, const sk_t *esk) {
+//ek     return sign_signature_internal(p, sig, siglen, m, mlen, esk, 1);
+//ek }   
 
 // Fused expandSK + Sign (NIST-style, compact key). All backends keep L implicit
 // (expand without L, sign on the fly) for best single-shot latency.
 int mayo_sign_signature(const mayo_params_t *p, unsigned char *sig,
               size_t *siglen, const unsigned char *m,
               size_t mlen, const unsigned char *csk) {
-    const int use_l = 0; // all backends expand without L and sign implicitly
-    alignas(32) sk_t sk;
-    int ret = expand_sk_internal(p, csk, &sk, use_l);
-    if (ret == MAYO_OK) {
-        ret = sign_signature_internal(p, sig, siglen, m, mlen, &sk, use_l);
-    }
-    mayo_secure_clear(&sk, sizeof(sk_t));
+    //ek const int use_l = 0; // all backends expand without L and sign implicitly
+    //ek alignas(32) sk_t sk;
+    
+    //ek int ret = expand_sk_internal(p, csk, &sk, use_l);
+    //ek if (ret == MAYO_OK) {
+    //ek     ret = sign_signature_internal(p, sig, siglen, m, mlen, &sk, use_l);
+    //ek }
+
+    int ret = sign_signature_internal(p, sig, siglen, m, mlen, csk);
+
+    //ek mayo_secure_clear(&sk, sizeof(sk_only_t));
     return ret;
 }
 
-int mayo_sign_esk(const mayo_params_t *p, unsigned char *sm,
-                  size_t *smlen, const unsigned char *m,
-                  size_t mlen, const sk_t *esk) {
-    int ret = MAYO_OK;
-    const int param_sig_bytes = PARAM_sig_bytes(p);
-    size_t siglen = param_sig_bytes;
-    memmove(sm + param_sig_bytes, m, mlen);
-    ret = mayo_sign_signature_esk(p, sm, &siglen, sm + param_sig_bytes, mlen, esk);
-    if (ret != MAYO_OK || siglen != (size_t)param_sig_bytes) {
-        memset(sm, 0, siglen + mlen);
-        goto err;
-    }
-    *smlen = siglen + mlen;
-err:
-    return ret;
-}
+//ek int mayo_sign_esk(const mayo_params_t *p, unsigned char *sm,
+//ek                   size_t *smlen, const unsigned char *m,
+//ek                   size_t mlen, const sk_t *esk) {
+//ek     int ret = MAYO_OK;
+//ek     const int param_sig_bytes = PARAM_sig_bytes(p);
+//ek     size_t siglen = param_sig_bytes;
+//ek     memmove(sm + param_sig_bytes, m, mlen);
+//ek     ret = mayo_sign_signature_esk(p, sm, &siglen, sm + param_sig_bytes, mlen, esk);
+//ek     if (ret != MAYO_OK || siglen != (size_t)param_sig_bytes) {
+//ek         memset(sm, 0, siglen + mlen);
+//ek         goto err;
+//ek     }
+//ek     *smlen = siglen + mlen;
+//ek err:
+//ek     return ret;
+//ek }
 
 int mayo_sign(const mayo_params_t *p, unsigned char *sm,
               size_t *smlen, const unsigned char *m,

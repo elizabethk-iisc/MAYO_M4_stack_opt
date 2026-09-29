@@ -3,6 +3,9 @@
 #ifndef GENERIC_ARITHMETIC_H
 #define GENERIC_ARITHMETIC_H
 
+#include <aes.h>
+#include <aes-publicinputs.h>
+#include <aes_ctr.h>
 #include <simple_arithmetic.h>
 
 #ifdef ENABLE_PARAMS_DYNAMIC
@@ -10,6 +13,8 @@
 #else
 #include <arithmetic_fixed.h>
 #endif
+
+extern void aes128_encrypt_publicinputs_asm(const uint8_t *rk, const uint8_t *in, uint8_t *out);
 
 // multiplies m (possibly upper triangular) matrices with a single matrix and adds result to acc
 static inline
@@ -326,6 +331,83 @@ void compute_M_and_VPV_implicit(const mayo_params_t* p, const unsigned char* Vde
 
     Wt_times_O(p, Pv, O, M);                                                     // M = V * (P1 + P1^t) * O
     mul_add_mat_x_m_mat(m_vec_limbs, Vdec, P2, M, param_k, param_v, param_o);    // M += V * P2
+}
+
+static inline
+void compute_M_and_VPV_otf(const mayo_params_t* p, const unsigned char* Vdec, const unsigned char *O, const unsigned char *seed_pk, const uint64_t *lambda, uint64_t *M, uint64_t *VP1V){
+    
+    #ifndef ENABLE_PARAMS_DYNAMIC
+    (void) p;
+    #endif
+
+    const int param_k = PARAM_k(p);
+    const int param_v = PARAM_v(p);
+    const int param_o = PARAM_o(p);
+    const int m_vec_limbs = PARAM_m_vec_limbs(p);
+
+    unsigned char iv[12] = { 0 };
+    aes_ctr_stream_t stream_P1;
+    aes_ctr_stream_t stream_P2;
+
+    aes128ctx_publicinputs ctx;
+
+    uint64_t words[m_vec_limbs];   
+    size_t nbytes = PARAM_m(p)/2;
+    uint64_t P1O_acc[O_MAX * M_VEC_LIMBS_MAX] = {0};
+    uint64_t vP1t_acc[K_MAX * M_VEC_LIMBS_MAX] = {0};
+    int r,c,k;
+
+    aes128_ctr_keyexp_publicinputs(&ctx, seed_pk);
+
+    aes_ctr_init(&stream_P1, iv, 0, ctx.sk_exp, aes128_encrypt_publicinputs_asm);
+    aes_ctr_init(&stream_P2, iv, PARAM_P2_init, ctx.sk_exp, aes128_encrypt_publicinputs_asm);
+    aes_ctr_refill(&stream_P2);
+    stream_P2.pos = PARAM_P2_pos;
+    stream_P2.available = 16 - PARAM_P2_pos;
+
+    //Computes V.L and V.P1.V^T
+    for (r = 0; r < param_v; r++) {
+        memset(P1O_acc, 0, O_MAX * M_VEC_LIMBS_MAX * sizeof(uint64_t));
+        memset(vP1t_acc, 0, K_MAX * M_VEC_LIMBS_MAX * sizeof(uint64_t));
+        for (c = r; c < param_v; c++) {
+            aes_ctr_get_words(&stream_P1, words, nbytes);
+            //For (P1.O + P2)
+            for (k = 0; k < param_o; k++) {
+                if(c == r) {
+                  aes_ctr_get_words(&stream_P2, P1O_acc + m_vec_limbs * k, nbytes);
+                }
+                m_vec_mul_add(m_vec_limbs, words, O[c * param_o + k], P1O_acc + m_vec_limbs * k);
+            }
+            //For VP1t
+            for (k = 0; k < param_k; k++) {
+                m_vec_mul_add(m_vec_limbs, words, Vdec[k * param_v + c], vP1t_acc + m_vec_limbs * k);
+            }
+        }
+
+        // Adding lambda to row 0 of vP1t - same as column 0 of P1t.v 
+        m_vec_add(m_vec_limbs, lambda + (size_t) r * m_vec_limbs, vP1t_acc);
+
+        //V.(P1.O + P2) computation
+        for (c = 0; c < param_o; c++) {
+            for (k = 0; k < param_k; k++) {
+                m_vec_mul_add(m_vec_limbs, P1O_acc + m_vec_limbs * c, Vdec[k * param_v + r], M + m_vec_limbs * (k * param_o + c));
+            }
+        }
+
+        //V.P1t.O computation
+        for (c = 0; c < param_k; c++) {
+            for (k = 0; k < param_o; k++) {
+                m_vec_mul_add(m_vec_limbs, vP1t_acc + m_vec_limbs * c, O[r * param_o + k], M + m_vec_limbs * (c * param_o + k));
+            }
+        }
+
+        //VP1Vt computation
+        for (c = 0; c < param_k; c++) {
+            for (k = 0; k < param_k; k++) {
+                m_vec_mul_add(m_vec_limbs, vP1t_acc + m_vec_limbs * c, Vdec[k * param_v + r], VP1V + m_vec_limbs * (k * param_k + c));
+            }
+        }
+    }
 }
 
 static inline
