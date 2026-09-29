@@ -53,24 +53,27 @@ void aes_ctr_init(aes_ctr_stream_t *s,
     s->available = 0;
 }
 
-void aes_ctr_get_words(aes_ctr_stream_t *s,
-                       uint64_t *out,
-                       size_t nbytes)
+void aes_ctr_get_words(aes_ctr_stream_t *s, uint64_t *out, size_t nbytes)
 {
     size_t nwords = (nbytes + 7) / 8;
 
-    memset(out, 0, nwords * sizeof(uint64_t));
+    // Only last word might have zeroes - not fully filled
+    out[nwords - 1] = 0;
 
-    for (size_t i = 0; i < nbytes; i++) {
 
-        if (s->available == 0)
+    unsigned char *dst = (unsigned char *)out;
+    size_t remaining = nbytes;
+
+    while (remaining > 0) {
+        if (s->available == 0) {
             aes_ctr_refill(s);
-
-        out[i >> 3] |=
-            (uint64_t)s->buf[s->pos] << (8 * (i & 7));
-
-        s->pos++;
-        s->available--;
+        }
+        size_t chunk = (remaining < s->available) ? remaining : s->available;
+        memcpy(dst, s->buf + s->pos, chunk);
+        dst += chunk;
+        s->pos += chunk;
+        s->available -= chunk;
+        remaining -= chunk;
     }
 }
 
