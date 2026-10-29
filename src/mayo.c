@@ -95,6 +95,66 @@ static void compute_rhs(const mayo_params_t *p, uint64_t *vPv, const unsigned ch
     }
 }
 
+static void compute_rhs_verify(const mayo_params_t *p, uint64_t *vPv, const unsigned char *t, unsigned char *y){
+    #ifndef ENABLE_PARAMS_DYNAMIC
+    (void) p;
+    #endif
+
+    const size_t top_pos = ((PARAM_m(p) - 1) % 16) * 4;
+    const size_t m_vec_limbs = PARAM_m_vec_limbs(p);
+
+    int index;
+
+    // zero out tails of m_vecs if neccesary
+    if(PARAM_m(p) % 16 != 0){
+        uint64_t mask = 1;
+        mask <<= ((PARAM_m(p) % 16)*4);
+        mask -= 1;
+        for (int i = 0; i < PARAM_k(p)*(PARAM_k(p)+1)/2; i++)
+        {
+            vPv[i*m_vec_limbs + m_vec_limbs - 1] &= mask;
+        }
+    }
+
+    uint64_t temp[M_VEC_LIMBS_MAX] = {0};
+    unsigned char *temp_bytes = (unsigned char *) temp;
+    // Horner in z over the whipping schedule: visiting the labels from the
+    // highest exponent down leaves the term of label l multiplied by z^l
+    const unsigned char *whip_positions = PARAM_whip_pos(p);
+    for (int l = PARAM_k(p) * (PARAM_k(p) + 1) / 2 - 1; l >= 0; l--) {
+        const int row = whip_positions[2*l], col = whip_positions[2*l + 1];
+        // multiply by X (shift up 4 bits)
+        unsigned char top = (temp[m_vec_limbs-1] >> top_pos) % 16;
+        temp[m_vec_limbs-1] <<= 4;
+        for(int k = m_vec_limbs - 2; k>=0; k--){
+            temp[k+1] ^= temp[k] >> 60;
+            temp[k] <<= 4;
+        }
+        // reduce mod f(X): tap jj lands in the low or high nibble of byte jj/2
+        for (int jj = 0; jj < F_TAIL_LEN; jj++) {
+            temp_bytes[MAYO_LIMB_BYTE(jj/2)] ^= mul_f(top, PARAM_f_tail(p)[jj]) << (4 * (jj % 2));
+        }
+
+        if (row < col)
+        	index = (row * PARAM_k(p)) - (row*(row - 1))/2 + (col - row);
+        else
+        	index = (col * PARAM_k(p)) - (col*(col - 1))/2 + (row - col);
+
+        // extract from vPv and add
+        for(size_t k=0; k < m_vec_limbs; k ++){
+//            temp[k] ^= vPv[( row * PARAM_k(p) + col )* m_vec_limbs + k] ^ ((row!=col)*vPv[( col * PARAM_k(p) + row )* m_vec_limbs + k]);
+            temp[k] ^= vPv[(index)* m_vec_limbs + k];
+        }
+    }
+
+    // compute y
+    for (int i = 0; i < PARAM_m(p); i+=2)
+    {
+        y[i]   = t[i]   ^ (temp_bytes[MAYO_LIMB_BYTE(i/2)] & 0xF);
+        y[i+1] = t[i+1] ^ (temp_bytes[MAYO_LIMB_BYTE(i/2)] >> 4);
+    }
+}
+
 static void transpose_16x16_nibbles(uint64_t *M){
     static const uint64_t even_nibbles = 0x0f0f0f0f0f0f0f0f;
     static const uint64_t even_bytes   = 0x00ff00ff00ff00ff;
@@ -907,8 +967,11 @@ int mayo_verify(const mayo_params_t *p, const unsigned char *m,
 
     int bs_mat_entries_used = 0;
 
-    alignas(64) uint64_t SPS[K_MAX * K_MAX * M_VEC_LIMBS_MAX + MAYO_MVEC_SLACK];
-    MAYO_ZERO_SLACK(SPS, PARAM_k(p) * PARAM_k(p) * PARAM_m_vec_limbs(p));
+    int sps_index;
+    int val;
+
+    alignas(64) uint64_t SPS[K_MAX * (K_MAX + 1)/2  * M_VEC_LIMBS_MAX + MAYO_MVEC_SLACK];
+    MAYO_ZERO_SLACK(SPS, PARAM_k(p) * (PARAM_k(p) + 1)/2 * PARAM_m_vec_limbs(p));
     MAYO_ACC_INIT(SPS); // the products below accumulate into it
 
 
@@ -983,8 +1046,17 @@ int mayo_verify(const mayo_params_t *p, const unsigned char *m,
         m_vec_add(m_vec_limbs, lambda + (size_t) r * m_vec_limbs, row_acc);
 
         for (int c = 0; c < PARAM_k(p); c++) {
+        	val = param_k - 1;
+        	sps_index = c;
             for (int k = 0; k < PARAM_k(p); k += 1) {
-                m_vec_mul_add(m_vec_limbs, row_acc + m_vec_limbs * c, s[k * PARAM_n(p) + r], SPS + m_vec_limbs * (k * PARAM_k(p) + c));
+        		m_vec_mul_add(m_vec_limbs, row_acc + m_vec_limbs * c, s[k * PARAM_n(p) + r], SPS + m_vec_limbs * sps_index);
+				if (k < c){
+					sps_index += val;
+					val--;
+				}
+				else {
+					sps_index ++;
+				}
             }
         }
     }
@@ -1005,14 +1077,23 @@ int mayo_verify(const mayo_params_t *p, const unsigned char *m,
         m_vec_add(m_vec_limbs, lambda + (size_t) (r + PARAM_v(p)) * m_vec_limbs, row_acc);
 
         for (int c = 0; c < PARAM_k(p); c++) {
+        	val = param_k - 1;
+        	sps_index = c;
             for (int k = 0; k < PARAM_k(p); k += 1) {
-                m_vec_mul_add(m_vec_limbs, row_acc + m_vec_limbs * c, s[PARAM_v(p) + k * PARAM_n(p) + r], SPS + m_vec_limbs * (k * PARAM_k(p) + c));
+            	m_vec_mul_add(m_vec_limbs, row_acc + m_vec_limbs * c, s[PARAM_v(p) + k * PARAM_n(p) + r], SPS + m_vec_limbs * sps_index);
+				if (k < c){
+					sps_index += val;
+					val--;
+				}
+				else {
+					sps_index ++;
+				}
             }
         }
     }
      
     unsigned char zero[M_MAX] = {0};
-    compute_rhs(p, SPS, zero, y); 
+    compute_rhs_verify(p, SPS, zero, y);
 
     if (memcmp(y, t, param_m) == 0) {
         return MAYO_OK; // good signature
