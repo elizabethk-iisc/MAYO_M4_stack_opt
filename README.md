@@ -11,5 +11,5 @@ common/aes.c common/aes-encrypt.S common/aes-keyschedule.S common/aes-publicinpu
 common/crypto_hashblocks_sha512.c mayo1/ref/aes_ctr.c mayo1/ref/api.c mayo1/ref/arithmetic.c mayo1/ref/mayo.c mayo1/ref/mem.c mayo1/ref/params.c -Wl,--start-group 
 -lpqm4hal -lm -Wl,--end-group
 
-To run using QEMU, use below command
+To run using QEMU, use below command:
 qemu-system-arm -M mps2-an386 -nographic -semihosting -kernel elf/crypto_sign_mayo1_ref_test.elf
