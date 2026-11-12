@@ -12,4 +12,5 @@ common/crypto_hashblocks_sha512.c mayo1/ref/aes_ctr.c mayo1/ref/api.c mayo1/ref/
 -lpqm4hal -lm -Wl,--end-group
 
 To run using QEMU, use below command:
+
 qemu-system-arm -M mps2-an386 -nographic -semihosting -kernel elf/crypto_sign_mayo1_ref_test.elf
