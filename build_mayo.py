@@ -51,7 +51,7 @@ MAYO_SOURCES = ["aes_ctr.c", "api.c", "arithmetic.c", "mayo.c", "mem.c", "params
 
 
 def output_path(version: str, program: str) -> str:
-    return f"elf/crypto_sign_mayo{version}_ref_{program}.elf"
+    return f"elf/crypto_sign_mayo{version}_opt_{program}.elf"
 
 
 def build_command(version: str, opt: str = "v1", program: str = "test") -> list[str]:

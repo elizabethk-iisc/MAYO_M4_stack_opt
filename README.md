@@ -5,37 +5,50 @@ Test files are present in mupq/crypto_sign.
 
 ## Building
 
-The command below compiles the test binary for **MAYO_1**. For another parameter set, replace every `mayo1` with that set's name (for example `mayo2`).
+### Usage
 
 ```bash
-arm-none-eabi-gcc \
-  -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 \
-  -std=gnu99 --sysroot= -O3 -g3 \
-  -Wall -Wextra -Wshadow -MMD -fno-common -ffreestanding \
-  -I./common -I./mupq/common -I./mayo1/ref \
-  -DMPS2_AN386 -DMUPQ -DMUPQ_NAMESPACE= -DMUPQ_ITERATIONS=1 \
-  -DMUPQ_MAXMLEN=2048 -DPQM4 \
-  --specs=nosys.specs \
-  -Wl,--wrap=_sbrk -Wl,--wrap=_open -Wl,--wrap=_close -Wl,--wrap=_isatty \
-  -Wl,--wrap=_kill -Wl,--wrap=_lseek -Wl,--wrap=_read -Wl,--wrap=_write \
-  -Wl,--wrap=_fstat -Wl,--wrap=_getpid -Wl,--no-warn-rwx-segments \
-  -Tobj/ldscript.ld -Lobj -Wl,--gc-sections \
-  -o elf/crypto_sign_mayo1_ref_test.elf \
-  mupq/crypto_sign/test.c \
-  mupq/common/fips202.c mupq/common/sp800-185.c \
-  mupq/common/nistseedexpander.c mupq/common/sha2.c \
-  common/keccakf1600.S \
-  common/aes.c common/aes-encrypt.S common/aes-keyschedule.S \
-  common/aes-publicinputs.c common/aes-publicinputs.S \
-  common/crypto_hashblocks_sha512_inner32.s common/crypto_hashblocks_sha512.c \
-  mayo1/ref/aes_ctr.c mayo1/ref/api.c mayo1/ref/arithmetic.c \
-  mayo1/ref/mayo.c mayo1/ref/mem.c mayo1/ref/params.c \
-  -Wl,--start-group -lpqm4hal -lm -Wl,--end-group
+python3 build_mayo.py <MAYO version> [v1|v2] [test|speed|stack] [--dry-run]
 ```
+
+Everything after the MAYO version is optional and can be given in any order. Options are case-insensitive.
+
+| Input | Values | Default |
+|---|---|---|
+| MAYO version | `1`, `2`, `3`, `5` (or `mayo1`, `mayo2`, …) | prompts if omitted |
+| Variant | `v1`, `v2` | `v1` |
+| Program | `test`, `speed`, `stack` | `test` |
+
+`--dry-run` prints the full gcc command without running it, so you can check what would be built.
+
+When the variant or program is left out, the script prints a note saying which default it used.
+
+### Examples
+
+```bash
+python3 build_mayo.py 2               # MAYO2, v1, test
+python3 build_mayo.py 2 v2            # MAYO2, v2, test
+python3 build_mayo.py 2 v2 speed      # MAYO2, v2, speed
+python3 build_mayo.py 3 stack         # MAYO3, v1, stack
+python3 build_mayo.py mayo5 stack v2  # MAYO5, v2, stack
+python3 build_mayo.py                 # asks for the MAYO version
+python3 build_mayo.py 1 v2 speed --dry-run   # show the command only
+```
+
+### Output
+
+The ELF is written to `elf/` (created if missing):
+
+```
+elf/crypto_sign_mayo<N>_opt_<program>.elf
+```
+
+For example, `elf/crypto_sign_mayo2_opt_speed.elf`. Note that v1 and v2 builds of the same version and program share a file name, so a v2 build overwrites the matching v1 ELF.
+
 
 ## Running in QEMU
 
 ```bash
 qemu-system-arm -M mps2-an386 -nographic -semihosting \
-  -kernel elf/crypto_sign_mayo1_ref_test.elf
+  -kernel elf/crypto_sign_mayo<N>_opt_<program>.elf
 ```
