@@ -31,37 +31,6 @@
 
 #define printcycles(S, U) send_unsignedll((S), (U))
 
-void bench_esk(unsigned char *sk, unsigned char *sm, size_t *smlen)
-{
-  unsigned long long t0, t1;
-  sk_t xsk;
-  t0 = hal_get_time();
-  (void) mayo_expand_sk(0, sk, &xsk);
-  t1 = hal_get_time();
-  printcycles("expand_sk cycles:", t1-t0);
-
-  randombytes(sm, MLEN);
-  t0 = hal_get_time();
-  (void) mayo_sign_esk(0, sm, smlen, sm, MLEN, &xsk);
-  t1 = hal_get_time();
-  printcycles("sign_esk cycles:", t1-t0);
-}
-
-void bench_epk(unsigned char *pk, unsigned char *sm, size_t smlen)
-{
-  unsigned long long t0, t1;
-  size_t mlen;
-  pk_t xpk;
-  t0 = hal_get_time();
-  (void) mayo_expand_pk(0, pk, xpk.p);
-  t1 = hal_get_time();
-  printcycles("expand_pk cycles:", t1-t0);
-
-  t0 = hal_get_time();
-  (void) mayo_open_epk(0, sm, &mlen, sm, smlen, xpk.p);
-  t1 = hal_get_time();
-  printcycles("verify_epk cycles:", t1-t0);
-}
 
 int main(void)
 {
@@ -83,11 +52,6 @@ int main(void)
     MUPQ_crypto_sign_keypair(pk, sk);
     t1 = hal_get_time();
     printcycles("keypair cycles:", t1-t0);
-
-    // ExpandSK and Sign from the expanded key
-    bench_esk(sk, sm, &smlen);
-    // ExpandPK and Verify from the expanded key, on the signature just produced
-    bench_epk(pk, sm, smlen);
 
     // Signing
     randombytes(sm, MLEN);

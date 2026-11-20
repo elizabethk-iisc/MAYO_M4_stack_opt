@@ -353,8 +353,13 @@ void compute_M_and_VPV_otf(const mayo_params_t* p, const unsigned char* Vdec, co
 
     uint64_t words[m_vec_limbs];   
     size_t nbytes = PARAM_m(p)/2;
-    uint64_t P1O_acc[O_MAX * M_VEC_LIMBS_MAX] = {0};
-    uint64_t vP1t_acc[K_MAX * M_VEC_LIMBS_MAX] = {0};
+    uint64_t P1O_acc[O_MAX * M_VEC_LIMBS_MAX];
+    uint64_t vP1t_acc[K_MAX * M_VEC_LIMBS_MAX];
+    #ifdef MAYO_OPT_V2
+    uint64_t bins_P1O_acc[O_MAX * M_VEC_LIMBS_MAX * 16];
+    uint64_t bins_vP1t_acc[K_MAX * M_VEC_LIMBS_MAX * 16];
+    #endif
+
     int r,c,k;
 
     aes128_ctr_keyexp_publicinputs(&ctx, seed_pk);
@@ -369,6 +374,10 @@ void compute_M_and_VPV_otf(const mayo_params_t* p, const unsigned char* Vdec, co
     for (r = 0; r < param_v; r++) {
         memset(P1O_acc, 0, O_MAX * M_VEC_LIMBS_MAX * sizeof(uint64_t));
         memset(vP1t_acc, 0, K_MAX * M_VEC_LIMBS_MAX * sizeof(uint64_t));
+        #ifdef MAYO_OPT_V2
+        memset(bins_P1O_acc, 0, O_MAX * M_VEC_LIMBS_MAX * 16 * sizeof(uint64_t));
+        memset(bins_vP1t_acc, 0, K_MAX * M_VEC_LIMBS_MAX * 16 * sizeof(uint64_t));
+        #endif
         for (c = r; c < param_v; c++) {
             aes_ctr_get_words(&stream_P1, words, nbytes);
             //For (P1.O + P2)
@@ -376,13 +385,32 @@ void compute_M_and_VPV_otf(const mayo_params_t* p, const unsigned char* Vdec, co
                 if(c == r) {
                   aes_ctr_get_words(&stream_P2, P1O_acc + m_vec_limbs * k, nbytes);
                 }
+                #ifdef MAYO_OPT_V2
+                m_vec_add(m_vec_limbs, words, bins_P1O_acc + m_vec_limbs * (k * 16 + O[c * param_o + k]));
+                #else
                 m_vec_mul_add(m_vec_limbs, words, O[c * param_o + k], P1O_acc + m_vec_limbs * k);
+                #endif
             }
             //For VP1t
             for (k = 0; k < param_k; k++) {
+                #ifdef MAYO_OPT_V2
+                m_vec_add(m_vec_limbs, words, bins_vP1t_acc + m_vec_limbs * (k * 16 + Vdec[k * param_v + c]));
+                #else
                 m_vec_mul_add(m_vec_limbs, words, Vdec[k * param_v + c], vP1t_acc + m_vec_limbs * k);
+                #endif                
             }
         }
+
+        #ifdef MAYO_OPT_V2
+        for (k = 0; k < PARAM_o(p); k++) {
+        	m_vec_multiply_add_bins(m_vec_limbs, bins_P1O_acc + m_vec_limbs * k * 16, P1O_acc + m_vec_limbs * k);
+        }
+
+        
+        for (k = 0; k < param_k; k++) {
+        	m_vec_multiply_bins(m_vec_limbs, bins_vP1t_acc + m_vec_limbs * k * 16, vP1t_acc + m_vec_limbs * k);
+        }
+        #endif
 
         // Adding lambda to row 0 of vP1t - same as column 0 of P1t.v 
         m_vec_add(m_vec_limbs, lambda + (size_t) r * m_vec_limbs, vP1t_acc);

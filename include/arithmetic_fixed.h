@@ -19,6 +19,15 @@ inline void m_vec_copy (int m_vec_limbs, const uint64_t *in, uint64_t *out) {
 }
 
 static
+inline void m_vec_copy_add (int m_vec_limbs, const uint64_t *in, uint64_t *out) {
+    (void) m_vec_limbs;
+    for (size_t i = 0; i < M_VEC_LIMBS_MAX; i++)
+    {
+        out[i] ^= in[i];
+    }
+}
+
+static
 inline void m_vec_add (int m_vec_limbs, const uint64_t *in, uint64_t *acc) {
     (void) m_vec_limbs;
     for (size_t i = 0; i < M_VEC_LIMBS_MAX; i++)
@@ -79,6 +88,25 @@ inline void m_vec_multiply_bins (int m_vec_limbs, uint64_t *bins, uint64_t *out)
     m_vec_mul_add_x_inv (m_vec_limbs, bins +   9 * M_VEC_LIMBS_MAX, bins +  1 * M_VEC_LIMBS_MAX);
     m_vec_mul_add_x (m_vec_limbs, bins +  2 * M_VEC_LIMBS_MAX, bins +  1 * M_VEC_LIMBS_MAX);
     m_vec_copy (m_vec_limbs, bins + M_VEC_LIMBS_MAX, out);
+}
+
+static
+inline void m_vec_multiply_add_bins (int m_vec_limbs, uint64_t *bins, uint64_t *out) {
+    m_vec_mul_add_x_inv (m_vec_limbs, bins +  5 * M_VEC_LIMBS_MAX, bins +  10 * M_VEC_LIMBS_MAX);
+    m_vec_mul_add_x (m_vec_limbs, bins + 11 * M_VEC_LIMBS_MAX, bins + 12 * M_VEC_LIMBS_MAX);
+    m_vec_mul_add_x_inv (m_vec_limbs, bins +  10 * M_VEC_LIMBS_MAX, bins +  7 * M_VEC_LIMBS_MAX);
+    m_vec_mul_add_x (m_vec_limbs, bins + 12 * M_VEC_LIMBS_MAX, bins +  6 * M_VEC_LIMBS_MAX);
+    m_vec_mul_add_x_inv (m_vec_limbs, bins +  7 * M_VEC_LIMBS_MAX, bins +  14 * M_VEC_LIMBS_MAX);
+    m_vec_mul_add_x (m_vec_limbs, bins +  6 * M_VEC_LIMBS_MAX, bins +  3 * M_VEC_LIMBS_MAX);
+    m_vec_mul_add_x_inv (m_vec_limbs, bins +  14 * M_VEC_LIMBS_MAX, bins +  15 * M_VEC_LIMBS_MAX);
+    m_vec_mul_add_x (m_vec_limbs, bins +  3 * M_VEC_LIMBS_MAX, bins +  8 * M_VEC_LIMBS_MAX);
+    m_vec_mul_add_x_inv (m_vec_limbs, bins +  15 * M_VEC_LIMBS_MAX, bins +  13 * M_VEC_LIMBS_MAX);
+    m_vec_mul_add_x (m_vec_limbs, bins +  8 * M_VEC_LIMBS_MAX, bins +  4 * M_VEC_LIMBS_MAX);
+    m_vec_mul_add_x_inv (m_vec_limbs, bins +  13 * M_VEC_LIMBS_MAX, bins +  9 * M_VEC_LIMBS_MAX);
+    m_vec_mul_add_x (m_vec_limbs, bins +  4 * M_VEC_LIMBS_MAX, bins +  2 * M_VEC_LIMBS_MAX);
+    m_vec_mul_add_x_inv (m_vec_limbs, bins +   9 * M_VEC_LIMBS_MAX, bins +  1 * M_VEC_LIMBS_MAX);
+    m_vec_mul_add_x (m_vec_limbs, bins +  2 * M_VEC_LIMBS_MAX, bins +  1 * M_VEC_LIMBS_MAX);
+    m_vec_copy_add (m_vec_limbs, bins + M_VEC_LIMBS_MAX, out);
 }
 
 #endif
