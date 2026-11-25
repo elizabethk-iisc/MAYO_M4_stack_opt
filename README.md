@@ -45,8 +45,13 @@ elf/crypto_sign_mayo<N>_opt_<program>.elf
 
 For example, `elf/crypto_sign_mayo2_opt_speed.elf`. Note that v1 and v2 builds of the same version and program share a file name, so a v2 build overwrites the matching v1 ELF.
 
+# Running the ELF
 
-## Running in QEMU
+### Running on the Nucleo board
+
+The ELF can be flashed to the Nucleo board using OpenOCD, as described in [PQCMayo/MAYO-M4](https://github.com/PQCMayo/MAYO-M4). Alternatively, it can be run using STM32CubeIDE on Windows.
+
+### Running on QEMU
 
 ```bash
 qemu-system-arm -M mps2-an386 -nographic -semihosting \
