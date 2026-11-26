@@ -3,15 +3,21 @@
 A stack-optimized implementation of the **MAYO** post-quantum signature scheme for ARM Cortex-M4 microcontrollers. The code follows the PQM4 directory layout.
 Test files are present in mupq/crypto_sign.
 
-## Building
+# Building
+
+There are two build scripts, one per target:
+
+```bash
+# NUCLEO-L4R5ZI board
+python3 build_mayo_nucleo.py <MAYO version> [v1|v2] [test|speed|stack] [--dry-run]
+
+# QEMU (mps2-an386)
+python3 build_mayo_qemu.py <MAYO version> [v1|v2] [test|speed|stack] [--dry-run]
+```
 
 ### Usage
 
-```bash
-python3 build_mayo.py <MAYO version> [v1|v2] [test|speed|stack] [--dry-run]
-```
-
-Everything after the MAYO version is optional and can be given in any order. Options are case-insensitive.
+Both scripts take the same inputs. Everything after the MAYO version is optional and can be given in any order. Options are case-insensitive.
 
 | Input | Values | Default |
 |---|---|---|
@@ -26,14 +32,12 @@ When the variant or program is left out, the script prints a note saying which d
 ### Examples
 
 ```bash
-python3 build_mayo.py 2               # MAYO2, v1, test
-python3 build_mayo.py 2 v2            # MAYO2, v2, test
-python3 build_mayo.py 2 v2 speed      # MAYO2, v2, speed
-python3 build_mayo.py 3 stack         # MAYO3, v1, stack
-python3 build_mayo.py mayo5 stack v2  # MAYO5, v2, stack
-python3 build_mayo.py                 # asks for the MAYO version
-python3 build_mayo.py 1 v2 speed --dry-run   # show the command only
+python3 build_mayo_nucleo.py 2               # MAYO2, v1, test
+python3 build_mayo_nucleo.py 2 v2 speed      # MAYO2, v2, speed
+python3 build_mayo_nucleo.py 3 stack         # MAYO3, v1, stack
 ```
+
+The same examples work with `build_mayo_qemu.py`.
 
 ### Output
 
@@ -43,17 +47,24 @@ The ELF is written to `elf/` (created if missing):
 elf/crypto_sign_mayo<N>_opt_<program>.elf
 ```
 
-For example, `elf/crypto_sign_mayo2_opt_speed.elf`. Note that v1 and v2 builds of the same version and program share a file name, so a v2 build overwrites the matching v1 ELF.
+For example, `elf/crypto_sign_mayo2_opt_speed.elf`. Note that both scripts, and v1 and v2 builds of the same version and program, share a file name, so a new build overwrites the previous ELF.
 
 # Running the ELF
 
 ### Running on the Nucleo board
 
-The ELF can be flashed to the Nucleo board using OpenOCD, as described in [PQCMayo/MAYO-M4](https://github.com/PQCMayo/MAYO-M4). Alternatively, it can be run using STM32CubeIDE on Windows.
+```bash
+python3 flash_and_run.py elf/crypto_sign_mayo<N>_opt_<program>.elf [--baud <rate>] [--port <device>] [--cfg <file>]
+```
+
+The optional settings are:
+
+- `--baud`: serial speed (default `38400`). It must match the firmware's `SERIAL_BAUD`, e.g. `--baud 115200`.
+- `--port`: serial device (default `/dev/ttyACM0`), e.g. `--port /dev/ttyACM1` when two boards are plugged in.
+- `--cfg`: OpenOCD config file (default `st_nucleo_l4r5.cfg`), for a different board or a config stored elsewhere.
 
 ### Running on QEMU
 
 ```bash
-qemu-system-arm -M mps2-an386 -nographic -semihosting \
-  -kernel elf/crypto_sign_mayo<N>_opt_<program>.elf
+qemu-system-arm -M mps2-an386 -nographic -semihosting -kernel elf/crypto_sign_mayo<N>_opt_<program>.elf
 ```
